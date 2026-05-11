@@ -7,22 +7,41 @@ from langchain_community.vectorstores import FAISS
 
 load_dotenv()
 
-# --- 1. GLOBAL INITIALIZATION ---
-# These load once on startup. This solves your 30-second delay.
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2",model_kwargs={'device': 'cpu'},cache_folder="./model_cache")
-db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-retriever = db.as_retriever(search_kwargs={"k": 3})
+# --- 1. GLOBAL RESOURCE CONTAINERS ---
+# We keep these empty at first to save RAM during startup
+_embeddings = None
+_db = None
+_client = None
 
-# Initialize the new Google GenAI Client
-# Ensure your .env has GOOGLE_API_KEY
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+def get_resources():
+    """Lazy loads memory-heavy models only when needed."""
+    global _embeddings, _db, _client
+    
+    # Initialize the Google Client once
+    if _client is None:
+        _client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    
+    # Initialize the heavy RAG components
+    if _embeddings is None:
+        print("--- LAZY LOADING EMBEDDINGS & VECTOR DB ---")
+        _embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'},
+            cache_folder="./model_cache"
+        )
+        _db = FAISS.load_local(
+            "faiss_index", 
+            _embeddings, 
+            allow_dangerous_deserialization=True
+        )
+    
+    return _client, _db
 
 # --- 2. RERANKER & FORMATTER ---
 def advanced_reranker_and_formatter(docs):
     pure_docs = []
     for doc in docs:
         name = doc.metadata.get("name", "").lower()
-        # Filter out "report" specific items to keep context clean
         impurities = ["report", "profile", "narrative", "feedback", "development"]
         if any(x in name for x in impurities):
             continue
@@ -33,21 +52,24 @@ def advanced_reranker_and_formatter(docs):
 
 # --- 3. THE MAIN FUNCTION ---
 def get_consultant_response(question, history):
+    # Step 0: Get resources (Loads them now if it's the first run)
+    client, db = get_resources()
+    
     # Step 1: Retrieve context from FAISS
+    # Using k=2 instead of 3 to save extra RAM during processing
+    retriever = db.as_retriever(search_kwargs={"k": 2})
     docs = retriever.invoke(question)
     context = advanced_reranker_and_formatter(docs)
 
     # Step 2: Prepare the Prompt
-    # We build the string manually because we aren't using the LangChain 'pipe' anymore
     prompt = f"""
- 
 You are a Senior SHL Solutions Consultant. You don't just find tests; you design assessment strategies.
 
 ### CONSULTANT GUIDELINES:
-1. **Proactive Bundling:** If a user mentions a domain (Sales, Leadership, Tech), immediately recommend a "Standard Industry Stack" from the CONTEXT. Do not wait for seniority/goal if you can make an educated guess.
-2. **Instrument vs. Report:** Understand that OPQ32r is an "Instrument" (the test) and reports (like MQ Sales or Leadership) are "Outputs." Explain this to the user to show expertise.
-3. **The "Always-On" Recommendation:** Never return an empty "recommendations" list if there are relevant products in the CONTEXT. Provide the "Best Fit" now and refine later.
-4. **Consistency:** If you suggest a 5-product stack, keep those same 5 products in the list throughout the conversation unless the user asks to change them.
+1. **Proactive Bundling:** Recommend a "Standard Industry Stack" immediately if possible.
+2. **Instrument vs. Report:** Distinguish between OPQ32r (test) and reports (outputs).
+3. **The "Always-On" Recommendation:** Never return an empty list.
+4. **Consistency:** Keep the same stack unless changed.
 
 ### CONTEXT:
 {context}
@@ -60,29 +82,27 @@ You are a Senior SHL Solutions Consultant. You don't just find tests; you design
 
 ### RESPONSE FORMAT (STRICT JSON):
 {{
-  "reply": "<A consultant-style response. Explain the 'Why' behind the stack. Distinguish between taking the test and getting the report. Be authoritative.>",
+  "reply": "<Explain strategy, distinguish test vs report. Be authoritative.>",
   "recommendations": [
     {{
-      "name": "<Exact product name from context>",
-      "url": "<Exact URL from context>",
-      "test_type": "<e.g., Personality, Cognitive, Behavior>"
+      "name": "<Exact product name>",
+      "url": "<Exact URL>",
+      "test_type": "<Personality, Cognitive, etc.>"
     }}
   ],
   "end_of_conversation": false
 }}
 
 ### CRITICAL RULES:
-- If you mention a product in the 'reply', it MUST be in the 'recommendations' array.
-- Do NOT ask more than one clarifying question per turn. Provide value first, then ask.
-- 'end_of_conversation' is ONLY true when the user confirms satisfaction (e.g., "Perfect", "Thanks").
- 
+- Mentioned products MUST be in recommendations array.
+- Max one clarifying question.
+- 'end_of_conversation' only true on user confirmation.
 """
 
-    # Step 3: Call the model using the new SDK syntax
-    # If gemini-3.1-pro-preview gives a 404, switch to "gemini-2.0-flash"
+    # Step 3: Call the model
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite", 
+            model="gemini-1.5-flash", 
             contents=prompt
         )
         return response.text
