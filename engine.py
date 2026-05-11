@@ -9,7 +9,7 @@ load_dotenv()
 
 # --- 1. GLOBAL INITIALIZATION ---
 # These load once on startup. This solves your 30-second delay.
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2",model_kwargs={'device': 'cpu'})
 db = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 retriever = db.as_retriever(search_kwargs={"k": 3})
 
