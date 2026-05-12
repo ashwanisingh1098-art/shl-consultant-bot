@@ -6,7 +6,9 @@ from engine import get_consultant_response
 
 app = FastAPI()
 
-# SCHEMA DEFINITIONS (Strictly following PDF)
+# ----------------------------
+# SCHEMAS
+# ----------------------------
 class Message(BaseModel):
     role: str
     content: str
@@ -14,28 +16,44 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
+
+# ----------------------------
+# HEALTH CHECK (Render uses this)
+# ----------------------------
+@app.get("/")
+def root():
+    return {"status": "RUNNING"}
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
+# ----------------------------
+# CHAT ENDPOINT (STREAMLIT CALLS THIS)
+# ----------------------------
 @app.post("/chat")
-async def chat(request: ChatRequest):
-    # 1. Transform history list into a single string to keep it stateless
-    history_str = ""
-    for msg in request.messages[:-1]: # All turns except the current one
-        history_str += f"{msg.role}: {msg.content}\n"
-    
-    # 2. Get current question
+def chat(request: ChatRequest):
+
+    # Build history string
+    history_str = "\n".join(
+        [f"{msg.role}: {msg.content}" for msg in request.messages[:-1]]
+    )
+
+    # Current user query
     current_q = request.messages[-1].content
-    
-    # 3. Get AI Response
+
+    # Call AI engine
     raw_ai_output = get_consultant_response(current_q, history_str)
-    
-    # 4. Parse string output into JSON object for the response
+
+    # Safe JSON parsing
     try:
         response_data = json.loads(raw_ai_output)
-    except:
-        # Fallback if LLM fails to output valid JSON
-        response_data = {"reply": raw_ai_output, "recommendations": [], "end_of_conversation": False}
-        
+    except Exception:
+        response_data = {
+            "reply": raw_ai_output,
+            "recommendations": [],
+            "end_of_conversation": False
+        }
+
     return response_data
