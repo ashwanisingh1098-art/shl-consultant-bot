@@ -26,7 +26,7 @@ if prompt := st.chat_input("How can I help with your talent audit?"):
     
     try:
         # Call your local FastAPI server
-        response = requests.post("https://shl-consultant-bot.onrender.com/chat", json=payload)
+        response = requests.post("https://atul-art-shl-consultant-bot.streamlit.app/", json=payload)
         data = response.json()
         
         ai_reply = data.get("reply", "No reply received.")
