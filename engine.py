@@ -86,7 +86,7 @@ OUTPUT FORMAT (STRICT JSON):
     try:
         # NOTICE: We removed the 'f' from the messages list to avoid the Dict error
         response = client.chat.completions.create(
-            model="arcee-ai/trinity-large-thinking:free", 
+            model="openai/gpt-oss-120b:free", 
             messages=[
                 {"role": "system", "content": "You are a strict JSON-only SHL consultant."},
                 {"role": "user", "content": prompt_text}
