@@ -1,5 +1,6 @@
 import streamlit as st
-import requests
+import json
+from engine import get_consultant_response
 
 st.set_page_config(page_title="SHL Consultant", layout="centered")
 
@@ -10,37 +11,47 @@ st.markdown("Enter your hiring needs below to get a tailored assessment stack.")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat messages from history on app rerun
+# Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# React to user input
+# Chat input
 if prompt := st.chat_input("How can I help with your talent audit?"):
-    # Display user message in chat message container
+
+    # Show user message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
-    # Prepare payload for your FastAPI backend
-    payload = {"messages": st.session_state.messages}
-    
+    # Build history string
+    history_str = ""
+    for msg in st.session_state.messages[:-1]:
+        history_str += f"{msg['role']}: {msg['content']}\n"
+
     try:
-        # Call your local FastAPI server
-        response = requests.post("https://atul-art-shl-consultant-bot.streamlit.app/", json=payload)
-        data = response.json()
-        
+        raw_output = get_consultant_response(prompt, history_str)
+
+        try:
+            data = json.loads(raw_output)
+        except:
+            data = {
+                "reply": raw_output,
+                "recommendations": [],
+                "end_of_conversation": False
+            }
+
         ai_reply = data.get("reply", "No reply received.")
         recs = data.get("recommendations", [])
 
-        # Display assistant response
         with st.chat_message("assistant"):
             st.markdown(ai_reply)
+
             if recs:
-                st.markdown("### Recommended Assessments:")
+                st.markdown("### Recommended Assessments")
                 for r in recs:
                     st.markdown(f"- **[{r['name']}]({r['url']})** ({r['test_type']})")
 
         st.session_state.messages.append({"role": "assistant", "content": ai_reply})
-        
+
     except Exception as e:
-        st.error(f"Error connecting to backend: {e}")
+        st.error(f"Backend error: {e}")
